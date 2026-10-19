@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Huduma Requests — Public Service Portal</title>
+<style>
+  :root{--bg:#0f172a;--card:#fff;--ink:#0f172a;--muted:#64748b;--brand:#2563eb;--ok:#16a34a;--warn:#d97706;--line:#e2e8f0}
+  *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:#f1f5f9;color:var(--ink)}
+  header{background:var(--brand);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center}
+  header h1{font-size:18px;margin:0}.tabs{display:flex;gap:8px;margin-top:10px}
+  .tab{padding:8px 14px;border-radius:8px;background:#e2e8f0;cursor:pointer;font-weight:600}.tab.active{background:var(--brand);color:#fff}
+  main{max-width:960px;margin:20px auto;padding:0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  label{display:block;font-weight:600;margin:10px 0 4px}input,select,textarea{width:100%;padding:9px;border:1px solid var(--line);border-radius:8px;font:inherit}
+  button{background:var(--brand);color:#fff;border:0;padding:10px 16px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:#fff;color:var(--brand);border:1px solid var(--brand)}
+  table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+  .pill{padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700}
+  .Pending{background:#fef3c7;color:#92400e}.InProgress{background:#dbeafe;color:#1e40af}.Resolved{background:#dcfce7;color:#166534}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .stat{text-align:center}.stat b{font-size:28px;display:block}.muted{color:var(--muted);font-size:13px}
+  .bar{height:10px;background:#e2e8f0;border-radius:6px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:var(--brand)}
+  img.thumb{max-width:120px;border-radius:8px;margin-top:6px}
+</style>
+</head>
+<body>
+<header><h1>🏛️ Huduma Requests</h1><div id="who"></div></header>
+<main>
+  <div class="tabs" id="tabs"></div>
+  <section id="view"></section>
+</main>
+<script>
+/* ============ STATE / STORAGE LAYER ============ */
+const STATUS = ["Pending","In Progress","Resolved"];
+const KEY = "psr_data_v1";
+const db = JSON.parse(localStorage.getItem(KEY) || '{"users":[],"requests":[]}');
+const save = () => localStorage.setItem(KEY, JSON.stringify(db));
+let session = JSON.parse(sessionStorage.getItem("psr_session") || "null");
+
+/* ============ HELPERS ============ */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pill = st => `<span class="pill ${st.replace(' ','')}">${st}</span>`;
+const nextStatus = st => STATUS[Math.min(STATUS.indexOf(st)+1, STATUS.length-1)];
+
+function analytics(){
+  const byStatus = Object.fromEntries(STATUS.map(s=>[s,0])), byCat={};
+  for(const r of db.requests){byStatus[r.status]++;byCat[r.category]=(byCat[r.category]||0)+1;}
+  const total=db.requests.length, resolved=byStatus.Resolved;
+  return {total,byStatus,byCat,open:total-resolved,rate:total?Math.round(resolved/total*100):0};
+}
+
+/* ============ AUTH ============ */
+function register(u,p){ if(db.users.find(x=>x.u===u))return alert("User exists"); db.users.push({u,p}); save(); login(u,p); }
+function login(u,p){ const x=db.users.find(x=>x.u===u&&x.p===p); if(!x)return alert("Invalid credentials"); session={u:x.u}; sessionStorage.setItem("psr_session",JSON.stringify(session)); render(); }
+function logout(){ session=null; sessionStorage.removeItem("psr_session"); render(); }
+
+/* ============ VIEWS ============ */
+function viewAuth(){ return `<div class="card" style="max-width:380px;margin:auto">
+  <h3>Citizen access</h3>
+  <label>Username</label><input id="au"><label>Password</label><input id="ap" type="password">
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button onclick="login(au.value,ap.value)">Login</button>
+    <button class="ghost" onclick="register(au.value,ap.value)">Register</button></div></div>`; }
+
+function viewSubmit(){ return `<div class="card"><h3>New service request</h3>
+  <label>Category</label><select id="cat">${["Streetlight","Water","Garbage","Roads","Sewage"].map(c=>`<option>${c}</option>`).join("")}</select>
+  <label>Location</label><input id="loc" placeholder="e.g. Moi Ave, Stage 4">
+  <label>Description</label><textarea id="desc" rows="3"></textarea>
+  <label>Photo (optional)</label><input id="img" type="file" accept="image/*">
+  <div style="margin-top:12px"><button onclick="submitReq()">Submit request</button></div></div>`; }
+
+function submitReq(){
+  const f=$("#img"), read=f.files[0]?new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f.files[0]);}):Promise.resolve(null);
+  read.then(img=>{ db.requests.push({id:"PSR-"+String(db.requests.length+1).padStart(4,"0"),citizen:session.u,category:$("#cat").value,location:$("#loc").value.trim(),description:$("#desc").value.trim(),image:img,status:"Pending",created:new Date().toISOString()}); save(); alert("Submitted ✔"); render(); });
+}
+
+function viewTrack(mine){ const rows=(mine?db.requests.filter(r=>r.citizen===session.u):db.requests).slice().reverse();
+  return `<div class="card"><h3>${mine?"My requests":"All requests"}</h3><table><tr><th>ID</th><th>Category</th><th>Location</th><th>Status</th><th>Details</th></tr>
+  ${rows.map(r=>`<tr><td>${r.id}</td><td>${esc(r.category)}</td><td>${esc(r.location)}</td><td>${pill(r.status)}</td>
+   <td>${esc(r.description)}${r.image?`<br><img class=thumb src="${r.image}">`:""}
+   ${!mine?`<br><button class=ghost onclick="advance('${r.id}')">Advance → ${nextStatus(r.status)}</button>`:""}</td></tr>`).join("")||"<tr><td colspan=5>No requests yet</td></tr>"}</table></div>`; }
+
+function advance(id){ const r=db.requests.find(x=>x.id===id); r.status=nextStatus(r.status); r.updated=new Date().toISOString(); save(); render(); }
+
+function viewAdmin(){ const a=analytics();
+  return `<div class="grid">
+    ${[["Total",a.total],["Open",a.open],["Resolved",a.byStatus.Resolved],["Resolution rate",a.rate+"%"]].map(([k,v])=>`<div class="card stat"><b>${v}</b><span class=muted>${k}</span></div>`).join("")}
+  </div>
+  <div class="card"><h3>Cases by status</h3>${STATUS.map(s=>`<div>${s}: ${a.byStatus[s]}<div class=bar><i style="width:${a.total?a.byStatus[s]/a.total*100:0}%"></i></div></div>`).join("")}</div>
+  ${viewTrack(false)}`; }
+
+/* ============ ROUTER ============ */
+const isAdmin = () => session?.u === "admin";
+function tabs(){ const t=[["submit","New request"],["track","My requests"]]; if(isAdmin())t.push(["admin","Admin dashboard"]);
+  return t.map(([k,l])=>`<div class="tab ${cur===k?'active':''}" onclick="go('${k}')">${l}</div>`).join(""); }
+let cur="submit";
+function go(k){ cur=k; render(); }
+function render(){
+  $("#who").innerHTML = session ? `${session.u}${isAdmin()?" 👑":""} · <a href="#" onclick="logout();return false" style="color:#fff">Logout</a>` : "";
+  $("#tabs").innerHTML = session ? tabs() : "";
+  const v=$("#view");
+  if(!session) return v.innerHTML=viewAuth();
+  v.innerHTML = cur==="submit"?viewSubmit():cur==="track"?viewTrack(true):viewAdmin();
+}
+// Seed an admin account on first run
+if(!db.users.find(u=>u.u==="admin")){db.users.push({u:"admin",p:"admin123"});save();}
+render();
+</script>
+</body>
+</html>
